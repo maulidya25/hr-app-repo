@@ -23,16 +23,16 @@ import {
   AlertCircle, 
   CheckCircle2, 
   ChevronLeft, 
-  Camera, 
-  Upload, 
   User, 
   LogOut,
   ChevronRight,
   ClipboardList,
-  UserCheck
+  UserCheck,
+  Bell,
+  Navigation
 } from 'lucide-react';
 
-// --- Konfigurasi Firebase ---
+// --- Konfigurasi Firebase Anda ---
 const firebaseConfig = {
   apiKey: "AIzaSyDgqxQ2IsGD-jSfZy8Yz2QsX4ZMFhThKNs",
   authDomain: "hrconnect-52be5.firebaseapp.com",
@@ -47,9 +47,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'hr-connect-pro-v1';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'hr-connect-pro-v2';
 
-// Lokasi Kantor Mock (Jakarta)
+// Lokasi Kantor (Mock)
 const OFFICE_COORDS = { lat: -6.2088, lng: 106.8456 };
 
 export default function App() {
@@ -63,53 +63,37 @@ export default function App() {
   const [statusMsg, setStatusMsg] = useState(null);
   const [authError, setAuthError] = useState(null);
 
-  // Logika Autentikasi (RULE 3: Autentikasi Sebelum Query)
   useEffect(() => {
     const initAuth = async () => {
       try {
         setLoading(true);
-        // Coba gunakan custom token jika tersedia
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           try {
             await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (tokenErr) {
-            // Jika token mismatch, lakukan fallback ke anonymous login
-            console.warn("Custom token bermasalah, beralih ke login anonim:", tokenErr);
+          } catch (e) {
             await signInAnonymously(auth);
           }
         } else {
           await signInAnonymously(auth);
         }
-        setAuthError(null);
       } catch (err) {
-        console.error("Detail galat autentikasi:", err);
-        if (err.code === 'auth/configuration-not-found') {
-          setAuthError("Galat: Fitur 'Anonymous Auth' belum diaktifkan di Firebase Console.");
-        } else {
-          setAuthError(`Galat Autentikasi: ${err.message}`);
-        }
+        setAuthError(err.message);
       } finally {
         setLoading(false);
       }
     };
-
     initAuth();
-
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u) {
-        const saved = localStorage.getItem('hr_session');
-        if (saved) {
-          setProfile(JSON.parse(saved));
-          setView('home');
-        }
+      const saved = localStorage.getItem('hr_session');
+      if (saved && u) {
+        setProfile(JSON.parse(saved));
+        setView('home');
       }
     });
-    
     return () => unsubscribe();
   }, []);
 
-  // Pemantau Lokasi
   useEffect(() => {
     if ("geolocation" in navigator && (view === 'attendance' || view === 'home')) {
       const watchId = navigator.geolocation.watchPosition((pos) => {
@@ -117,28 +101,18 @@ export default function App() {
         setLocation(userLoc);
         const d = calculateDistance(userLoc.lat, userLoc.lng, OFFICE_COORDS.lat, OFFICE_COORDS.lng);
         setDistance(d);
-      }, (err) => console.warn("Galat GPS:", err), { enableHighAccuracy: true });
-      
+      }, null, { enableHighAccuracy: true });
       return () => navigator.geolocation.clearWatch(watchId);
     }
   }, [view]);
 
-  // Sinkronisasi Firestore (Diproteksi dengan pengecekan user)
   useEffect(() => {
     if (!user || !profile) return;
-
     const q = collection(db, 'artifacts', appId, 'users', user.uid, 'activity_logs');
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setActivities(data.sort((a, b) => {
-        const timeA = a.timestamp?.seconds || 0;
-        const timeB = b.timestamp?.seconds || 0;
-        return timeB - timeA;
-      }));
-    }, (err) => {
-      console.error("Galat Snapshot Firestore:", err);
+      setActivities(data.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)));
     });
-
     return () => unsubscribe();
   }, [user, profile]);
 
@@ -156,163 +130,190 @@ export default function App() {
   const submitActivity = async (type, data) => {
     if (!user) return;
     try {
-      setStatusMsg({ type: 'info', text: 'Mengirim data...' });
+      setStatusMsg({ type: 'info', text: 'Memproses...' });
       await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'activity_logs'), {
         type,
         ...data,
         timestamp: serverTimestamp(),
         status: 'Pending'
       });
-      setStatusMsg({ type: 'success', text: `Berhasil mengajukan ${type}` });
-      setTimeout(() => { setStatusMsg(null); setView('home'); }, 2000);
+      setStatusMsg({ type: 'success', text: 'Berhasil dikirim' });
+      setTimeout(() => { setStatusMsg(null); setView('home'); }, 1500);
     } catch (e) {
-      console.error("Galat Pengiriman:", e);
-      setStatusMsg({ type: 'error', text: 'Gagal mengirim data ke server.' });
+      setStatusMsg({ type: 'error', text: 'Gagal mengirim data' });
       setTimeout(() => setStatusMsg(null), 3000);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full mb-4"></div>
-        <p className="text-gray-500 font-medium tracking-wide">Menghubungkan ke server...</p>
+  if (loading) return (
+    <div className="h-screen flex items-center justify-center bg-white">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-12 h-12 border-4 border-slate-100 border-t-blue-600 rounded-full animate-spin"></div>
+        <p className="text-slate-400 font-medium animate-pulse">Memuat aplikasi...</p>
       </div>
-    );
-  }
-
-  if (authError) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-8 text-center">
-        <AlertCircle size={48} className="text-red-500 mb-4" />
-        <h2 className="text-xl font-bold text-red-800 mb-2">Konfigurasi Bermasalah</h2>
-        <p className="text-red-600 mb-6">{authError}</p>
-        <div className="bg-white p-4 rounded-xl shadow-sm text-sm text-left border border-red-100">
-          <p className="font-bold mb-2">Cara Memperbaiki:</p>
-          <ol className="list-decimal ml-4 space-y-1 text-gray-700">
-            <li>Buka <strong>Firebase Console</strong>.</li>
-            <li>Pilih menu <strong>Authentication</strong> di sidebar.</li>
-            <li>Klik tab <strong>Sign-in method</strong>.</li>
-            <li>Klik <strong>Add new provider</strong>.</li>
-            <li>Pilih <strong>Anonymous</strong> dan klik <strong>Enable</strong>.</li>
-            <li>Simpan dan muat ulang aplikasi ini.</li>
-          </ol>
-        </div>
-      </div>
-    );
-  }
+    </div>
+  );
 
   const LoginView = () => {
     const [form, setForm] = useState({ company: '', nik: '', pass: '' });
     return (
-      <div className="min-h-screen bg-blue-700 flex flex-col p-8 items-center justify-center text-white">
-        <div className="bg-white/10 p-4 rounded-3xl mb-6 backdrop-blur-md">
-          <LayoutDashboard size={48} />
+      <div className="min-h-screen bg-slate-50 flex flex-col">
+        <div className="flex-1 flex flex-col items-center justify-center p-8">
+          <div className="w-20 h-20 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-[2.5rem] shadow-2xl shadow-blue-200 flex items-center justify-center mb-8 rotate-3">
+            <LayoutDashboard size={40} className="text-white -rotate-3" />
+          </div>
+          <div className="text-center mb-10">
+            <h1 className="text-3xl font-black text-slate-800 tracking-tight">HR CONNECT</h1>
+            <p className="text-slate-400 font-medium">Professional Workforce Management</p>
+          </div>
+          
+          <div className="w-full max-w-sm space-y-4">
+            <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100">
+              <input 
+                className="w-full bg-transparent p-4 outline-none text-slate-700 placeholder:text-slate-300 font-medium"
+                placeholder="ID Perusahaan"
+                onChange={e => setForm({...form, company: e.target.value})}
+              />
+            </div>
+            <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100">
+              <input 
+                className="w-full bg-transparent p-4 outline-none text-slate-700 placeholder:text-slate-300 font-medium"
+                placeholder="NIK Karyawan"
+                onChange={e => setForm({...form, nik: e.target.value})}
+              />
+            </div>
+            <div className="bg-white rounded-3xl p-2 shadow-sm border border-slate-100">
+              <input 
+                type="password"
+                className="w-full bg-transparent p-4 outline-none text-slate-700 placeholder:text-slate-300 font-medium"
+                placeholder="Kata Sandi"
+                onChange={e => setForm({...form, pass: e.target.value})}
+              />
+            </div>
+            <button 
+              onClick={() => {
+                if(!form.nik) return;
+                const mock = { name: 'Ahmad Fauzi', nik: form.nik, company: form.company, leave: 14, dept: 'Operasional' };
+                setProfile(mock);
+                localStorage.setItem('hr_session', JSON.stringify(mock));
+                setView('home');
+              }}
+              className="w-full bg-slate-900 text-white font-bold py-5 rounded-3xl shadow-xl shadow-slate-200 active:scale-95 transition-all"
+            >
+              MASUK KE SISTEM
+            </button>
+          </div>
         </div>
-        <h1 className="text-3xl font-black mb-2 text-center">HR CONNECT</h1>
-        <p className="text-blue-100 mb-10 opacity-70 uppercase tracking-widest text-xs text-center">Employee Self Service</p>
-        
-        <div className="w-full max-w-sm space-y-4">
-          <input 
-            className="w-full bg-white/10 border border-white/20 p-4 rounded-2xl outline-none focus:bg-white/20 transition placeholder-blue-200"
-            placeholder="Company ID"
-            value={form.company}
-            onChange={e => setForm({...form, company: e.target.value})}
-          />
-          <input 
-            className="w-full bg-white/10 border border-white/20 p-4 rounded-2xl outline-none focus:bg-white/20 transition placeholder-blue-200"
-            placeholder="NIK Karyawan"
-            value={form.nik}
-            onChange={e => setForm({...form, nik: e.target.value})}
-          />
-          <input 
-            type="password"
-            className="w-full bg-white/10 border border-white/20 p-4 rounded-2xl outline-none focus:bg-white/20 transition placeholder-blue-200"
-            placeholder="Password"
-            value={form.pass}
-            onChange={e => setForm({...form, pass: e.target.value})}
-          />
-          <button 
-            onClick={() => {
-              if(!form.nik || !form.company) return;
-              const mock = { name: 'Karyawan Demo', nik: form.nik, company: form.company, leave: 12 };
-              setProfile(mock);
-              localStorage.setItem('hr_session', JSON.stringify(mock));
-              setView('home');
-            }}
-            className="w-full bg-white text-blue-700 font-bold p-4 rounded-2xl shadow-xl active:scale-95 transition"
-          >
-            MASUK
-          </button>
-        </div>
+        <p className="p-8 text-center text-slate-300 text-xs font-bold uppercase tracking-widest">v2.0.4 Platinum Edition</p>
       </div>
     );
   };
 
   const HomeView = () => (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      <div className="bg-blue-600 p-6 pt-10 rounded-b-[3rem] text-white shadow-lg relative">
-        <div className="flex justify-between items-start mb-8">
-          <div>
-            <p className="text-blue-200 text-sm">Halo,</p>
-            <h2 className="text-xl font-bold">{profile?.name}</h2>
-            <p className="text-xs opacity-60 font-mono tracking-tighter mt-1">{profile?.nik} | {profile?.company}</p>
-          </div>
-          <button onClick={() => { localStorage.clear(); setView('login'); }} className="p-2 bg-white/10 rounded-xl hover:bg-white/20 transition"><LogOut size={20} /></button>
-        </div>
-
-        <div className="bg-white rounded-3xl p-5 shadow-xl flex items-center justify-between text-gray-800">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><Calendar size={24} /></div>
+    <div className="min-h-screen bg-[#F8FAFC]">
+      {/* Premium Header */}
+      <div className="bg-white px-6 pt-12 pb-24 rounded-b-[3.5rem] shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full -mr-20 -mt-20 blur-3xl opacity-50"></div>
+        
+        <div className="flex justify-between items-center relative z-10 mb-8">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-bold text-xl shadow-lg">
+              {profile?.name?.charAt(0)}
+            </div>
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sisa Cuti Tahunan</p>
-              <p className="text-2xl font-black text-blue-600">{profile?.leave} <span className="text-sm font-medium text-gray-400">Hari</span></p>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">Selamat Bekerja,</p>
+              <h2 className="text-xl font-black text-slate-800">{profile?.name}</h2>
             </div>
           </div>
-          <ChevronRight className="text-gray-300" />
+          <div className="flex gap-2">
+            <div className="relative p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <Bell size={20} className="text-slate-400" />
+              <div className="absolute top-3 right-3 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></div>
+            </div>
+            <button onClick={() => { localStorage.clear(); setView('login'); }} className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-slate-400">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </div>
+
+        {/* Cuti Highlight Card */}
+        <div className="absolute left-6 right-6 -bottom-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[2.5rem] p-6 shadow-2xl shadow-blue-200 text-white flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-4 bg-white/20 rounded-3xl backdrop-blur-md">
+              <Calendar size={28} />
+            </div>
+            <div>
+              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-widest">Sisa Cuti Tahunan</p>
+              <p className="text-3xl font-black">{profile?.leave} <span className="text-sm font-medium opacity-70 tracking-normal">Hari</span></p>
+            </div>
+          </div>
+          <button className="bg-white/20 p-3 rounded-2xl backdrop-blur-md">
+            <ChevronRight size={24} />
+          </button>
         </div>
       </div>
 
-      <div className="px-6 mt-12 grid grid-cols-2 gap-4">
+      {/* Grid Menu */}
+      <div className="mt-20 px-6 grid grid-cols-2 gap-4">
         {[
-          { id: 'attendance', label: 'Attendance', icon: Clock, color: 'bg-emerald-500' },
-          { id: 'correction', label: 'Incorrect Absen', icon: AlertCircle, color: 'bg-amber-500' },
-          { id: 'leave', label: 'Leave Request', icon: Calendar, color: 'bg-rose-500' },
-          { id: 'ot', label: 'OT Request', icon: Timer, color: 'bg-indigo-500' },
-          { id: 'permission', label: 'Permission', icon: ClipboardList, color: 'bg-cyan-500' },
-          { id: 'approval', label: 'Approval', icon: UserCheck, color: 'bg-blue-500' }
+          { id: 'attendance', label: 'Attendance', desc: 'In & Out', icon: Clock, color: 'text-emerald-500', bg: 'bg-emerald-50' },
+          { id: 'correction', label: 'Correction', desc: 'Lupa Absen', icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-50' },
+          { id: 'leave', label: 'Leave', desc: 'Izin & Cuti', icon: Calendar, color: 'text-rose-500', bg: 'bg-rose-50' },
+          { id: 'ot', label: 'Overtime', desc: 'Lembur', icon: Timer, color: 'text-indigo-500', bg: 'bg-indigo-50' },
+          { id: 'permission', label: 'Permission', desc: 'Izin Khusus', icon: ClipboardList, color: 'text-cyan-500', bg: 'bg-cyan-50' },
+          { id: 'approval', label: 'Approval', desc: 'Persetujuan', icon: UserCheck, color: 'text-blue-500', bg: 'bg-blue-50' }
         ].map(menu => (
           <button 
             key={menu.id} 
             onClick={() => setView(menu.id)}
-            className="bg-white p-5 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col items-center gap-2 active:scale-95 transition hover:shadow-md"
+            className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col items-start gap-4 transition-all active:scale-95 hover:shadow-md group"
           >
-            <div className={`${menu.color} p-4 rounded-2xl text-white shadow-md`}><menu.icon size={24} /></div>
-            <span className="text-xs font-bold text-gray-600">{menu.label}</span>
+            <div className={`${menu.bg} ${menu.color} p-4 rounded-2xl group-hover:scale-110 transition-transform`}>
+              <menu.icon size={24} strokeWidth={2.5} />
+            </div>
+            <div>
+              <p className="text-sm font-black text-slate-800">{menu.label}</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase">{menu.desc}</p>
+            </div>
           </button>
         ))}
       </div>
 
-      <div className="px-6 mt-10">
-        <h3 className="font-bold text-gray-800 mb-4">Aktivitas Terakhir</h3>
+      {/* Recent History */}
+      <div className="px-6 mt-10 pb-10">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="font-black text-slate-800">Aktivitas Terbaru</h3>
+          <p className="text-blue-600 text-xs font-bold uppercase tracking-wider">Lihat Semua</p>
+        </div>
         <div className="space-y-3">
           {activities.length === 0 ? (
-            <div className="text-center py-10 text-gray-400 border-2 border-dashed rounded-3xl">Tidak ada aktivitas</div>
+            <div className="bg-white rounded-[2rem] p-10 text-center border border-dashed border-slate-200">
+              <p className="text-slate-400 font-medium">Belum ada riwayat aktivitas</p>
+            </div>
           ) : (
-            activities.slice(0, 10).map(act => (
-              <div key={act.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${act.type.includes('OUT') ? 'bg-orange-50 text-orange-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                    {act.type.includes('OUT') ? <LogOut size={18} /> : <CheckCircle2 size={18} />}
+            activities.slice(0, 5).map(act => (
+              <div key={act.id} className="bg-white p-5 rounded-3xl border border-slate-50 flex items-center justify-between shadow-sm">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                    act.type.includes('IN') ? 'bg-emerald-50 text-emerald-600' : 
+                    act.type.includes('OUT') ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'
+                  }`}>
+                    {act.type.includes('IN') ? <CheckCircle2 size={20} /> : 
+                     act.type.includes('OUT') ? <LogOut size={20} /> : <Calendar size={20} />}
                   </div>
                   <div>
-                    <p className="font-bold text-sm text-gray-800">{act.type}</p>
-                    <p className="text-[10px] text-gray-400">{act.timestamp?.toDate().toLocaleString('id-ID')}</p>
+                    <p className="font-black text-sm text-slate-800">{act.type}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">
+                      {act.timestamp?.toDate().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} • 
+                      {act.timestamp?.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                    </p>
                   </div>
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${act.status === 'Pending' ? 'bg-amber-100 text-amber-600' : 'bg-green-100 text-green-600'}`}>
+                <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                  act.status === 'Pending' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'
+                }`}>
                   {act.status}
-                </span>
+                </div>
               </div>
             ))
           )}
@@ -321,102 +322,111 @@ export default function App() {
     </div>
   );
 
+  const FormHeader = ({ title }) => (
+    <header className="bg-white px-6 py-6 border-b border-slate-100 flex items-center gap-4 sticky top-0 z-50">
+      <button onClick={() => setView('home')} className="p-3 bg-slate-50 rounded-2xl text-slate-400">
+        <ChevronLeft size={20} strokeWidth={3} />
+      </button>
+      <h2 className="text-lg font-black text-slate-800 tracking-tight">{title}</h2>
+    </header>
+  );
+
   const AttendanceView = () => (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white p-5 border-b flex items-center gap-4">
-        <button onClick={() => setView('home')} className="p-2 bg-gray-50 rounded-xl hover:bg-gray-100 transition"><ChevronLeft /></button>
-        <h2 className="font-bold">Kehadiran</h2>
-      </header>
-      <div className="p-6 space-y-6 text-center">
-        <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-gray-100">
-          <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full mx-auto flex items-center justify-center mb-4">
-            <MapPin size={32} />
+    <div className="min-h-screen bg-[#F8FAFC]">
+      <FormHeader title="Pencatatan Kehadiran" />
+      <div className="p-6 flex flex-col items-center gap-8">
+        <div className="w-full bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-600"></div>
+          <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl mx-auto flex items-center justify-center mb-6 rotate-3">
+            <MapPin size={36} strokeWidth={2.5} />
           </div>
-          <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-1">Lokasi Anda</p>
-          <p className="font-bold text-gray-800">{location ? `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : "Mencari koordinat..."}</p>
-          <div className="mt-4 p-2 bg-slate-50 rounded-2xl text-xs font-medium text-gray-500">
-            Jarak ke Kantor: <span className="text-blue-600 font-bold">{distance || '--'} m</span>
+          <p className="text-xs text-slate-400 font-bold uppercase tracking-[0.2em] mb-2">Lokasi Terdeteksi</p>
+          <p className="font-black text-slate-800 text-lg">
+            {location ? `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}` : "Mengunci GPS..."}
+          </p>
+          <div className="mt-6 inline-flex items-center gap-2 px-6 py-3 bg-slate-50 rounded-2xl border border-slate-100">
+            <Navigation size={14} className="text-blue-600" />
+            <span className="text-xs font-bold text-slate-500">Jarak: <span className="text-blue-600">{distance || '0'} meter</span></span>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 w-full gap-4">
           <button 
             disabled={!location || loading}
             onClick={() => submitActivity('Check IN', { coords: location, dist: distance })}
-            className="bg-emerald-500 text-white p-8 rounded-3xl shadow-lg active:scale-95 transition flex flex-col items-center gap-2 disabled:opacity-50"
+            className="group relative bg-emerald-500 hover:bg-emerald-600 text-white p-8 rounded-[2.5rem] shadow-xl shadow-emerald-100 flex items-center justify-between overflow-hidden transition-all active:scale-[0.98] disabled:opacity-50"
           >
-            <CheckCircle2 size={32} />
-            <span className="font-black">ABSEN IN</span>
+            <div className="relative z-10">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 text-left mb-1">Mulai Bekerja</p>
+              <h4 className="text-2xl font-black">ABSEN MASUK</h4>
+            </div>
+            <div className="bg-white/20 p-4 rounded-2xl relative z-10"><CheckCircle2 size={32} /></div>
           </button>
+
           <button 
             disabled={!location || loading}
             onClick={() => submitActivity('Check OUT', { coords: location, dist: distance })}
-            className="bg-orange-500 text-white p-8 rounded-3xl shadow-lg active:scale-95 transition flex flex-col items-center gap-2 disabled:opacity-50"
+            className="group relative bg-rose-500 hover:bg-rose-600 text-white p-8 rounded-[2.5rem] shadow-xl shadow-rose-100 flex items-center justify-between overflow-hidden transition-all active:scale-[0.98] disabled:opacity-50"
           >
-            <LogOut size={32} />
-            <span className="font-black">ABSEN OUT</span>
+            <div className="relative z-10 text-left">
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 mb-1">Selesai Bekerja</p>
+              <h4 className="text-2xl font-black">ABSEN PULANG</h4>
+            </div>
+            <div className="bg-white/20 p-4 rounded-2xl relative z-10"><LogOut size={32} /></div>
           </button>
         </div>
       </div>
     </div>
   );
 
-  const LeaveView = () => {
-    const [form, setForm] = useState({ reason: 'Sakit', start: '', end: '', note: '' });
-    const reasons = ['Sakit', 'Izin Permisi', 'Cuti Tahunan', 'Cuti Menikah', 'Cuti Melahirkan', 'Cuti Kedukaan', 'Cuti Ibadah'];
+  const GenericForm = ({ title, icon: Icon, type, fields, colorClass, buttonColor }) => {
+    const [formData, setFormData] = useState({});
     return (
-      <div className="min-h-screen bg-slate-50">
-        <header className="bg-white p-5 border-b flex items-center gap-4">
-          <button onClick={() => setView('home')} className="p-2 bg-gray-50 rounded-xl hover:bg-gray-100 transition"><ChevronLeft /></button>
-          <h2 className="font-bold">Pengajuan Cuti</h2>
-        </header>
+      <div className="min-h-screen bg-[#F8FAFC]">
+        <FormHeader title={title} />
         <div className="p-6">
-          <div className="bg-white p-6 rounded-3xl shadow-sm space-y-4 border border-gray-100">
-            <div>
-              <label className="text-xs font-bold text-gray-400 uppercase">Kategori</label>
-              <select className="w-full mt-1 p-3 bg-gray-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition" value={form.reason} onChange={e => setForm({...form, reason: e.target.value})}>
-                {reasons.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 space-y-6">
+            <div className="flex items-center gap-4 mb-4">
+              <div className={`p-4 rounded-2xl ${colorClass} text-white shadow-lg`}><Icon size={24} /></div>
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Mulai</label>
-                <input type="date" className="w-full p-3 bg-gray-50 border rounded-xl" onChange={e => setForm({...form, start: e.target.value})} />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Sampai</label>
-                <input type="date" className="w-full p-3 bg-gray-50 border rounded-xl" onChange={e => setForm({...form, end: e.target.value})} />
+                <p className="text-xs text-slate-400 font-bold uppercase">Formulir</p>
+                <p className="font-black text-slate-800">{title}</p>
               </div>
             </div>
-            <textarea className="w-full p-3 bg-gray-50 border rounded-xl h-24 resize-none outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Catatan tambahan..." onChange={e => setForm({...form, note: e.target.value})} />
-            <button disabled={loading} onClick={() => submitActivity('Leave Request', form)} className="w-full bg-rose-500 text-white font-bold p-4 rounded-2xl shadow-lg active:scale-95 transition disabled:opacity-50">AJUKAN</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const OTView = () => {
-    const [form, setForm] = useState({ category: 'OUT OT', fromTime: '', toTime: '', activity: '' });
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <header className="bg-white p-5 border-b flex items-center gap-4">
-          <button onClick={() => setView('home')} className="p-2 bg-gray-50 rounded-xl hover:bg-gray-100 transition"><ChevronLeft /></button>
-          <h2 className="font-bold">Pengajuan Lembur</h2>
-        </header>
-        <div className="p-6">
-          <div className="bg-white p-6 rounded-3xl shadow-sm space-y-4 border border-gray-100">
-            <div className="grid grid-cols-3 gap-2">
-              {['IN OT', 'OUT OT', 'Holiday'].map(cat => (
-                <button key={cat} onClick={() => setForm({...form, category: cat})} className={`p-2 rounded-xl text-[10px] font-bold border transition ${form.category === cat ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-gray-50 text-gray-400 border-gray-100'}`}>{cat}</button>
+            
+            <div className="space-y-5">
+              {fields.map(f => (
+                <div key={f.name}>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 block mb-2 tracking-widest">{f.label}</label>
+                  {f.type === 'select' ? (
+                    <select 
+                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-bold text-slate-700 appearance-none"
+                      onChange={e => setFormData({...formData, [f.name]: e.target.value})}
+                    >
+                      {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                  ) : f.type === 'textarea' ? (
+                    <textarea 
+                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-medium text-slate-700 h-32 resize-none"
+                      placeholder={f.placeholder}
+                      onChange={e => setFormData({...formData, [f.name]: e.target.value})}
+                    />
+                  ) : (
+                    <input 
+                      type={f.type}
+                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-sm font-bold text-slate-700"
+                      onChange={e => setFormData({...formData, [f.name]: e.target.value})}
+                    />
+                  )}
+                </div>
               ))}
+              <button 
+                onClick={() => submitActivity(type, formData)}
+                className={`w-full ${buttonColor} text-white font-black py-5 rounded-[2rem] shadow-xl transition-all active:scale-[0.98] mt-4 tracking-widest`}
+              >
+                KIRIM PENGAJUAN
+              </button>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <input type="time" className="p-3 bg-gray-50 border rounded-xl" onChange={e => setForm({...form, fromTime: e.target.value})} />
-              <input type="time" className="p-3 bg-gray-50 border rounded-xl" onChange={e => setForm({...form, toTime: e.target.value})} />
-            </div>
-            <textarea className="w-full p-3 bg-gray-50 border rounded-xl h-20 resize-none outline-none focus:ring-2 focus:ring-blue-500 transition" placeholder="Deskripsi pekerjaan lembur..." onChange={e => setForm({...form, activity: e.target.value})} />
-            <button disabled={loading} onClick={() => submitActivity('OT Request', form)} className="w-full bg-indigo-600 text-white font-bold p-4 rounded-2xl shadow-lg active:scale-95 transition disabled:opacity-50">KIRIM PENGAJUAN</button>
           </div>
         </div>
       </div>
@@ -424,15 +434,15 @@ export default function App() {
   };
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-white relative shadow-2xl overflow-x-hidden">
+    <div className="max-w-md mx-auto min-h-screen bg-white relative shadow-2xl overflow-x-hidden font-sans">
       {statusMsg && (
-        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[100] w-full max-w-[320px] px-4">
-          <div className={`px-6 py-3 rounded-2xl shadow-2xl flex items-center justify-center gap-2 text-sm font-bold animate-in fade-in slide-in-from-top-4 duration-300 ${
-            statusMsg.type === 'success' ? 'bg-green-600 text-white' : 
-            statusMsg.type === 'info' ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'
+        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[100] w-full max-w-[320px] px-4 animate-in fade-in slide-in-from-top-10 duration-500">
+          <div className={`px-8 py-4 rounded-3xl shadow-2xl flex items-center justify-center gap-3 text-sm font-black tracking-wide border backdrop-blur-md ${
+            statusMsg.type === 'success' ? 'bg-emerald-500/90 text-white border-emerald-400' : 
+            statusMsg.type === 'info' ? 'bg-slate-900/90 text-white border-slate-700' : 'bg-rose-500/90 text-white border-rose-400'
           }`}>
-            {statusMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-            {statusMsg.text}
+            {statusMsg.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+            {statusMsg.text.toUpperCase()}
           </div>
         </div>
       )}
@@ -440,27 +450,52 @@ export default function App() {
       {view === 'login' && <LoginView />}
       {view === 'home' && <HomeView />}
       {view === 'attendance' && <AttendanceView />}
-      {view === 'leave' && <LeaveView />}
-      {view === 'ot' && <OTView />}
-      {view === 'permission' && (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-10 text-center">
-          <ClipboardList size={64} className="text-gray-300 mb-4" />
-          <p className="text-gray-500 font-medium mb-6 font-semibold">Fitur Izin Khusus sedang dalam tahap pengembangan.</p>
-          <button onClick={() => setView('home')} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-blue-200">Kembali</button>
-        </div>
+      
+      {view === 'leave' && (
+        <GenericForm 
+          title="Leave Request" 
+          icon={Calendar} 
+          type="Leave" 
+          colorClass="bg-rose-500"
+          buttonColor="bg-rose-500 shadow-rose-200"
+          fields={[
+            { name: 'reason', label: 'Jenis Cuti', type: 'select', options: ['Sakit', 'Cuti Tahunan', 'Cuti Menikah', 'Keperluan Penting'] },
+            { name: 'start', label: 'Tanggal Mulai', type: 'date' },
+            { name: 'end', label: 'Tanggal Akhir', type: 'date' },
+            { name: 'note', label: 'Keterangan Tambahan', type: 'textarea', placeholder: 'Tulis detail alasan Anda...' }
+          ]}
+        />
       )}
-      {view === 'correction' && (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-10 text-center">
-          <AlertCircle size={64} className="text-gray-300 mb-4" />
-          <p className="text-gray-500 font-medium mb-6 font-semibold">Fitur Koreksi Absen segera hadir.</p>
-          <button onClick={() => setView('home')} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-blue-200">Kembali</button>
-        </div>
+
+      {view === 'ot' && (
+        <GenericForm 
+          title="Overtime Request" 
+          icon={Timer} 
+          type="Overtime" 
+          colorClass="bg-indigo-600"
+          buttonColor="bg-indigo-600 shadow-indigo-200"
+          fields={[
+            { name: 'category', label: 'Tipe Lembur', type: 'select', options: ['After Shift (OUT OT)', 'Before Shift (IN OT)', 'Holiday OT'] },
+            { name: 'time_from', label: 'Dari Jam', type: 'time' },
+            { name: 'time_to', label: 'Sampai Jam', type: 'time' },
+            { name: 'activity', label: 'Aktivitas Pekerjaan', type: 'textarea', placeholder: 'Jelaskan apa yang dikerjakan saat lembur...' }
+          ]}
+        />
       )}
-      {view === 'approval' && (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-10 text-center">
-          <UserCheck size={64} className="text-gray-300 mb-4" />
-          <p className="text-gray-500 font-medium mb-6 font-semibold">Menu Persetujuan akan segera tersedia.</p>
-          <button onClick={() => setView('home')} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold shadow-lg shadow-blue-200">Kembali</button>
+
+      {['permission', 'correction', 'approval'].includes(view) && (
+        <div className="min-h-screen bg-[#F8FAFC]">
+          <FormHeader title="Menu Dalam Pengembangan" />
+          <div className="p-10 flex flex-col items-center justify-center text-center gap-6 mt-20">
+            <div className="w-32 h-32 bg-slate-100 rounded-[3rem] flex items-center justify-center text-slate-300">
+              <ClipboardList size={64} />
+            </div>
+            <div>
+              <h4 className="font-black text-slate-800 text-lg">Halaman Belum Tersedia</h4>
+              <p className="text-slate-400 text-sm mt-2">Fitur ini sedang dalam tahap pengembangan oleh tim IT.</p>
+            </div>
+            <button onClick={() => setView('home')} className="bg-slate-900 text-white px-10 py-4 rounded-3xl font-bold">KEMBALI KE BERANDA</button>
+          </div>
         </div>
       )}
     </div>
